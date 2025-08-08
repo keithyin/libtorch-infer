@@ -40,8 +40,6 @@ void warm_up(torch::jit::Module &nn, c10::Device device)
     std::cout << "warm up: tot_sum: " << tot_sum << std::endl;
 }
 
-
-
 void single_thread_infer(torch::jit::Module &nn, c10::Device device)
 {
     float tot_sum = 0.0;
@@ -67,8 +65,21 @@ void single_thread_infer(torch::jit::Module &nn, c10::Device device)
 void single_thread_real_scenerio()
 {
     int num_feature = 256 * 200 * 61;
+
+    std::vector<float> feature_origin(1, num_feature);
+    std::vector<int64_t> length_origin(200, 256);
+
     torch::Tensor feature = torch::zeros({256, 200, 61}, c10::TensorOptions().dtype(torch::kFloat32));
     torch::Tensor length = torch::zeros({256}, c10::TensorOptions().dtype(torch::kInt64));
+
+    for (int i = 0; i < 1000; i++)
+    {
+        memcpy(feature.data_ptr<float>(), feature_origin.data(), feature_origin.size());
+        memcpy(length.data_ptr<int64_t>(), length_origin.data(), length_origin.size());
+
+        
+
+    }
 }
 
 int main()
