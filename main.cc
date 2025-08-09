@@ -256,20 +256,20 @@ void single_thread_real_scenerio_with_pinned_memory_and_stream_gemm(c10::Device 
     torch::Tensor weight4 = torch::ones({5, 5}, c10::TensorOptions().dtype(torch::kFloat32).device(device));
 
     // WARM-UP: trigger lazy init (do this synchronously)
-    {
-        at::cuda::CUDAStreamGuard guard(stream1);
-        feature_s1_cuda.copy_(feature_s1, /*non_blocking=*/true);
-        auto tmp = feature_s1_cuda.matmul(weight).matmul(weight2).matmul(weight3).matmul(weight4);
-        result_s1.copy_(tmp, /*non_blocking=*/true);
-    }
-    {
-        at::cuda::CUDAStreamGuard guard(stream2);
-        feature_s2_cuda.copy_(feature_s2, /*non_blocking=*/true);
-        auto tmp = feature_s2_cuda.matmul(weight).matmul(weight2).matmul(weight3).matmul(weight4);
-        result_s2.copy_(tmp, /*non_blocking=*/true);
-    }
-    // ensure warm-up finished
-    cudaDeviceSynchronize();
+    // {
+    //     at::cuda::CUDAStreamGuard guard(stream1);
+    //     feature_s1_cuda.copy_(feature_s1, /*non_blocking=*/true);
+    //     auto tmp = feature_s1_cuda.matmul(weight).matmul(weight2).matmul(weight3).matmul(weight4);
+    //     result_s1.copy_(tmp, /*non_blocking=*/true);
+    // }
+    // {
+    //     at::cuda::CUDAStreamGuard guard(stream2);
+    //     feature_s2_cuda.copy_(feature_s2, /*non_blocking=*/true);
+    //     auto tmp = feature_s2_cuda.matmul(weight).matmul(weight2).matmul(weight3).matmul(weight4);
+    //     result_s2.copy_(tmp, /*non_blocking=*/true);
+    // }
+    // // ensure warm-up finished
+    // cudaDeviceSynchronize();
 
     for (int i = 0; i < 10; i++)
     {
@@ -387,14 +387,14 @@ void test_pytorch_stream_overlap(c10::Device device)
         {
             if (i > 0)
             {
-                // s1.synchronize();
+                s1.synchronize();
             }
             at::cuda::CUDAStreamGuard guard(s1);
             record_event(e_s1_pre, s1);
             feature_s1_cuda.copy_(feature_s1, /*non_blocking=*/true);
             auto tmp = torch::matmul(feature_s1_cuda, weight); // may call cuBLAS
-            // result_s1.copy_(tmp, /*non_blocking=*/true);
-            cudaMemcpyAsync(result_s1.data_ptr<float>(), tmp.data_ptr<float>(), tmp.numel() * sizeof(float), cudaMemcpyDeviceToHost, s1.stream());
+            result_s1.copy_(tmp, /*non_blocking=*/true);
+            // cudaMemcpyAsync(result_s1.data_ptr<float>(), tmp.data_ptr<float>(), tmp.numel() * sizeof(float), cudaMemcpyDeviceToHost, s1.stream());
             record_event(e_s1_post, s1);
         }
 
@@ -402,14 +402,14 @@ void test_pytorch_stream_overlap(c10::Device device)
         {
             if (i > 0)
             {
-                // s2.synchronize();
+                s2.synchronize();
             }
             at::cuda::CUDAStreamGuard guard(s2);
             record_event(e_s2_pre, s2);
             feature_s2_cuda.copy_(feature_s2, /*non_blocking=*/true);
             auto tmp2 = torch::matmul(feature_s2_cuda, weight);
-            // result_s2.copy_(tmp2, /*non_blocking=*/true);
-            cudaMemcpyAsync(result_s2.data_ptr<float>(), tmp2.data_ptr<float>(), tmp2.numel() * sizeof(float), cudaMemcpyDeviceToHost, s2.stream());
+            result_s2.copy_(tmp2, /*non_blocking=*/true);
+            // cudaMemcpyAsync(result_s2.data_ptr<float>(), tmp2.data_ptr<float>(), tmp2.numel() * sizeof(float), cudaMemcpyDeviceToHost, s2.stream());
 
             record_event(e_s2_post, s2);
         }
@@ -454,7 +454,7 @@ int main()
     c10::Device device("cuda:0");
     torch::NoGradGuard no_grad;
 
-    test_pytorch_stream_overlap(device);
+    // test_pytorch_stream_overlap(device);
     // torch::jit::Module nn = get_model_for_infer(device);
     // warm_up(nn, device);
 
@@ -462,5 +462,5 @@ int main()
 
     // single_thread_real_scenerio(nn, device);
     // single_thread_infer(nn, device);
-    // single_thread_real_scenerio_with_pinned_memory_and_stream_gemm(device);
+    single_thread_real_scenerio_with_pinned_memory_and_stream_gemm(device);
 }
