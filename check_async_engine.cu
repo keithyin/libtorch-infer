@@ -13,3 +13,5 @@ int main() {
 
     return 0;
 }
+
+// nvcc -o check_async_engine check_async_engine.cu

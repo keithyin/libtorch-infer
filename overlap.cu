@@ -35,7 +35,7 @@ int main() {
     // Async H2D copy on stream 1
     // 该代码观察到的现象是，dummy_kernel 直到 cudaMemcpyAsync 中的 内存拷贝之后才被调度执行
     // dummy_kernel 的执行和 dummy_kernel 后面提交的 cudaMemcpyAsync 的执行是 overlap 的
-    
+
     cudaMemcpyAsync(d_data, h_data, bytes, cudaMemcpyHostToDevice, stream_memcpy);
     cudaMemcpyAsync(d_data, h_data, bytes, cudaMemcpyHostToDevice, stream_memcpy);
     // Launch kernel on stream 2 (assume no dependency, simulate overlap)
@@ -58,3 +58,5 @@ int main() {
     std::cout << "Done with async memcpy and compute with overlap.\n";
     return 0;
 }
+
+// nvcc -o overlap.exe overlap.cu
