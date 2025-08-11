@@ -1,6 +1,8 @@
 #include <torch/torch.h>
 #include <torch/script.h>
 #include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/CUDAGraph.h>
+
 #include <c10/cuda/CUDAGuard.h>
 #include <memory>
 #include <iostream>
@@ -15,6 +17,18 @@ torch::jit::Module get_model_for_infer(c10::Device device)
     torch::jit::Module nn;
 
     nn = torch::jit::load("/root/projects/libtorch-infer/models/model");
+    nn.eval();
+    nn.to(device);
+    return nn;
+}
+
+torch::jit::Module get_model_for_infer_selfattn(c10::Device device)
+{
+    std::cout << "LibTorch Version: " << TORCH_VERSION << std::endl;
+
+    torch::jit::Module nn;
+
+    nn = torch::jit::load("/root/projects/libtorch-infer/models/selfattn/model");
     nn.eval();
     nn.to(device);
     return nn;
@@ -65,7 +79,7 @@ void single_thread_infer(torch::jit::Module &nn, c10::Device device)
     std::cout << "single_thread_infer: tot_sum: " << tot_sum << " elapsed: " << elapsed.count() << std::endl;
 }
 
-void single_thread_real_scenerio(torch::jit::Module &nn, c10::Device device)
+void single_thread_real_scenerio(torch::jit::Module &nn, c10::Device device, int tot_iterations = 1000)
 {
     int num_feature = 256 * 200 * 61;
 
@@ -79,7 +93,7 @@ void single_thread_real_scenerio(torch::jit::Module &nn, c10::Device device)
     float tot_sum = 0.0;
     auto start = std::chrono::high_resolution_clock::now();
 
-    for (int i = 0; i < 1000; i++)
+    for (int i = 0; i < tot_iterations; i++)
     {
         memcpy(feature.data_ptr<float>(), feature_origin.data(), feature_origin.size());
         memcpy(length.data_ptr<int64_t>(), length_origin.data(), length_origin.size());
@@ -133,7 +147,7 @@ void single_thread_real_scenerio_with_pinned_memory(torch::jit::Module &nn, c10:
     std::cout << "single_thread_real_scenerio: tot_sum: " << tot_sum << " elapsed: " << elapsed.count() << std::endl;
 }
 
-void single_thread_real_scenerio_with_pinned_memory_and_stream(torch::jit::Module &nn, c10::Device device)
+void single_thread_real_scenerio_with_pinned_memory_and_stream(torch::jit::Module &nn, c10::Device device, int tot_iterations = 1000)
 {
     int num_feature = 256 * 200 * 61;
 
@@ -163,7 +177,7 @@ void single_thread_real_scenerio_with_pinned_memory_and_stream(torch::jit::Modul
     float tot_sum = 0.0;
     auto start = std::chrono::high_resolution_clock::now();
 
-    for (int i = 0; i < 500; i++)
+    for (int i = 0; i < tot_iterations / 2; i++)
     {
         {
             if (i > 0)
@@ -222,6 +236,8 @@ void single_thread_real_scenerio_with_pinned_memory_and_stream(torch::jit::Modul
 
 void thread_worker(torch::jit::Module &nn, c10::Device device, int iterations, float &sum_out)
 {
+    torch::NoGradGuard no_grad;
+
     float local_sum = 0.0;
     at::cuda::CUDAStream stream = at::cuda::getStreamFromPool(false, device.index());
     stream.synchronize();
@@ -231,51 +247,99 @@ void thread_worker(torch::jit::Module &nn, c10::Device device, int iterations, f
     std::vector<float> feature_origin(num_feature, 1);
     std::vector<int64_t> length_origin(256, 200);
 
-    torch::Tensor feature_s1 = torch::zeros({256, 200, 61}, c10::TensorOptions().dtype(torch::kFloat32).pinned_memory(true));
-    torch::Tensor length_s1 = torch::zeros({256}, c10::TensorOptions().dtype(torch::kInt64).pinned_memory(true));
+    torch::Tensor feature = torch::zeros({256, 200, 61}, c10::TensorOptions().dtype(torch::kFloat32).pinned_memory(true));
+    torch::Tensor length = torch::zeros({256}, c10::TensorOptions().dtype(torch::kInt64).pinned_memory(true));
 
-    torch::Tensor feature_s1_cuda = torch::zeros({256, 200, 61}, c10::TensorOptions().dtype(torch::kFloat32).device(device));
-    torch::Tensor length_s1_cuda = torch::zeros({256}, c10::TensorOptions().dtype(torch::kInt64).device(device));
+    torch::Tensor feature_cuda = torch::zeros({256, 200, 61}, c10::TensorOptions().dtype(torch::kFloat32).device(device));
+    torch::Tensor length_cuda = torch::zeros({256}, c10::TensorOptions().dtype(torch::kInt64).device(device));
 
-    torch::Tensor result_s1 = torch::zeros({256, 200, 5}, c10::TensorOptions().dtype(torch::kFloat32).pinned_memory(true));
-
-    torch::Tensor feature_s2 = torch::zeros({256, 200, 61}, c10::TensorOptions().dtype(torch::kFloat32).pinned_memory(true));
-    torch::Tensor length_s2 = torch::zeros({256}, c10::TensorOptions().dtype(torch::kInt64).pinned_memory(true));
-
-    torch::Tensor feature_s2_cuda = torch::zeros({256, 200, 61}, c10::TensorOptions().dtype(torch::kFloat32).device(device));
-    torch::Tensor length_s2_cuda = torch::zeros({256}, c10::TensorOptions().dtype(torch::kInt64).device(device));
-    torch::Tensor result_s2 = torch::zeros({256, 200, 5}, c10::TensorOptions().dtype(torch::kFloat32).pinned_memory(true));
+    torch::Tensor result = torch::zeros({256, 200, 5}, c10::TensorOptions().dtype(torch::kFloat32).pinned_memory(true));
+    at::cuda::CUDAStreamGuard guard(stream);
 
     for (int i = 0; i < iterations; ++i)
     {
-        at::cuda::CUDAStreamGuard guard(stream);
         // Host buffer 填充
-        memcpy(feature_s1.data_ptr<float>(), feature_origin.data(), feature_origin.size());
-        memcpy(length_s1.data_ptr<int64_t>(), length_origin.data(), length_origin.size());
+        memcpy(feature.data_ptr<float>(), feature_origin.data(), feature_origin.size());
+        memcpy(length.data_ptr<int64_t>(), length_origin.data(), length_origin.size());
 
-        feature_s1_cuda.copy_(feature_s1, true);
-        length_s1_cuda.copy_(length_s1, true);
+        feature_cuda.copy_(feature, true);
+        length_cuda.copy_(length, true);
 
         std::vector<torch::jit::IValue> inp;
-        inp.push_back(feature_s1_cuda);
-        inp.push_back(length_s1_cuda);
-        result_s1.copy_(nn.forward(inp).toTensor().contiguous(), true);
+        inp.push_back(feature_cuda);
+        inp.push_back(length_cuda);
+        result.copy_(nn.forward(inp).toTensor().contiguous(), true);
         stream.synchronize();
-        std::vector<float> output(result_s1.data_ptr<float>(), result_s1.data_ptr<float>() + result_s1.numel());
+        std::vector<float> output(result.data_ptr<float>(), result.data_ptr<float>() + result.numel());
         local_sum += output[0];
         sum_out = local_sum;
     }
     sum_out = local_sum;
 }
 
-void multi_thread_real_scenerio_with_pinned_memory_and_stream(torch::jit::Module &nn, c10::Device device)
+void thread_worker_with_cuda_graph(torch::jit::Module &nn, c10::Device device, int iterations, float &sum_out)
+{
+    torch::NoGradGuard no_grad;
+
+    float local_sum = 0.0;
+    at::cuda::CUDAStream stream = at::cuda::getStreamFromPool(false, device.index());
+    stream.synchronize();
+
+    at::cuda::CUDAGraph graph;
+
+    int num_feature = 256 * 200 * 61;
+
+    std::vector<float> feature_origin(num_feature, 1);
+    std::vector<int64_t> length_origin(256, 200);
+
+    torch::Tensor feature = torch::zeros({256, 200, 61}, c10::TensorOptions().dtype(torch::kFloat32).pinned_memory(true));
+    torch::Tensor length = torch::zeros({256}, c10::TensorOptions().dtype(torch::kInt64).pinned_memory(true));
+
+    torch::Tensor feature_cuda = torch::zeros({256, 200, 61}, c10::TensorOptions().dtype(torch::kFloat32).device(device));
+    torch::Tensor length_cuda = torch::zeros({256}, c10::TensorOptions().dtype(torch::kInt64).device(device));
+
+    torch::Tensor result = torch::zeros({256, 200, 5}, c10::TensorOptions().dtype(torch::kFloat32).pinned_memory(true));
+    at::cuda::CUDAStreamGuard guard(stream);
+
+    // capture
+    graph.capture_begin();
+    feature_cuda.copy_(feature, true);
+    length_cuda.copy_(length, true);
+
+    std::vector<torch::jit::IValue> inp;
+    inp.push_back(feature_cuda);
+    inp.push_back(length_cuda);
+    result.copy_(nn.forward(inp).toTensor().contiguous(), true);
+    graph.capture_end();
+
+    for (int i = 0; i < iterations; ++i)
+    {
+        // Host buffer 填充
+        memcpy(feature.data_ptr<float>(), feature_origin.data(), feature_origin.size());
+        memcpy(length.data_ptr<int64_t>(), length_origin.data(), length_origin.size());
+
+        graph.replay();
+        // feature_cuda.copy_(feature, true);
+        // length_cuda.copy_(length, true);
+
+        // std::vector<torch::jit::IValue> inp;
+        // inp.push_back(feature_cuda);
+        // inp.push_back(length_cuda);
+        // result.copy_(nn.forward(inp).toTensor().contiguous(), true);
+        stream.synchronize();
+        std::vector<float> output(result.data_ptr<float>(), result.data_ptr<float>() + result.numel());
+        local_sum += output[0];
+        sum_out = local_sum;
+    }
+    sum_out = local_sum;
+}
+
+void multi_thread_real_scenerio_with_pinned_memory_and_stream(torch::jit::Module &nn, c10::Device device, int iterations, int num_threads)
 {
     const int batch = 256;
     const int len = 200;
     const int feat = 61;
     const int num_features = batch * len * feat;
-    const int iterations = 500;
-    const int num_threads = 2; // 每个线程独立 stream
 
     std::vector<std::thread> threads;
     std::vector<float> sums(num_threads, 0.0);
@@ -284,7 +348,7 @@ void multi_thread_real_scenerio_with_pinned_memory_and_stream(torch::jit::Module
 
     for (int t = 0; t < num_threads; ++t)
     {
-        std::thread thread(thread_worker, std::ref(nn), device, iterations, std::ref(sums[t]));
+        std::thread thread(thread_worker, std::ref(nn), device, iterations / num_threads, std::ref(sums[t]));
         threads.emplace_back(std::move(thread));
     }
 
@@ -302,6 +366,40 @@ void multi_thread_real_scenerio_with_pinned_memory_and_stream(torch::jit::Module
     std::cout << "multi_thread_real_scenerio: total_sum: " << total_sum
               << " elapsed: " << elapsed.count() << " ms" << std::endl;
 }
+
+void multi_thread_real_scenerio_with_pinned_memory_and_stream_and_cuda_graph(torch::jit::Module &nn, c10::Device device, int iterations, int num_threads)
+{
+    const int batch = 256;
+    const int len = 200;
+    const int feat = 61;
+    const int num_features = batch * len * feat;
+
+    std::vector<std::thread> threads;
+    std::vector<float> sums(num_threads, 0.0);
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+    for (int t = 0; t < num_threads; ++t)
+    {
+        std::thread thread(thread_worker_with_cuda_graph, std::ref(nn), device, iterations / num_threads, std::ref(sums[t]));
+        threads.emplace_back(std::move(thread));
+    }
+
+    for (auto &th : threads)
+    {
+        th.join();
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    double total_sum = 0.0;
+    for (float s : sums)
+        total_sum += s;
+
+    std::chrono::duration<double, std::milli> elapsed = end - start;
+    std::cout << "multi_thread_real_scenerio_cuda_graph: total_sum: " << total_sum
+              << " elapsed: " << elapsed.count() << " ms" << std::endl;
+}
+
 
 void single_thread_real_scenerio_with_pinned_memory_and_stream_gemm(c10::Device device)
 {
@@ -653,15 +751,20 @@ int main()
 {
     torch::set_num_interop_threads(1);
     torch::set_num_threads(1);
-    c10::Device device("cuda:0");
+    c10::Device device("cuda:3");
     torch::NoGradGuard no_grad;
 
     test_pytorch_stream_overlap(device);
-    torch::jit::Module nn = get_model_for_infer(device);
+    // torch::jit::Module nn = get_model_for_infer(device);
+    torch::jit::Module nn = get_model_for_infer_selfattn(device);
     warm_up(nn, device);
+    int tot_iter = 4000;
+    single_thread_real_scenerio(nn, device, tot_iter);
+    single_thread_real_scenerio_with_pinned_memory_and_stream(nn, device, tot_iter);
+    multi_thread_real_scenerio_with_pinned_memory_and_stream(nn, device, tot_iter, 2);
+    multi_thread_real_scenerio_with_pinned_memory_and_stream_and_cuda_graph(nn, device, tot_iter, 2);
 
-    single_thread_real_scenerio_with_pinned_memory_and_stream(nn, device);
-    multi_thread_real_scenerio_with_pinned_memory_and_stream(nn, device);
+    // multi_thread_real_scenerio_with_pinned_memory_and_stream(nn, device, tot_iter, 4);
 
     // single_thread_real_scenerio(nn, device);
     // single_thread_infer(nn, device);
