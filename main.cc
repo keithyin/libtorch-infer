@@ -507,9 +507,6 @@ void test_pytorch_stream_overlap(c10::Device device)
     torch::Tensor feature_s1_cuda = torch::empty({B, L, F}, opts_cuda);
     torch::Tensor feature_s2_cuda = torch::empty({B, L, F}, opts_cuda);
 
-    torch::Tensor result_s1_cuda;
-    torch::Tensor result_s2_cuda;
-
     torch::Tensor result_s1 = torch::empty({B, L, 5}, torch::kFloat32).pin_memory();
     torch::Tensor result_s2 = result_s1.clone().pin_memory();
 
@@ -532,8 +529,8 @@ void test_pytorch_stream_overlap(c10::Device device)
             }
             at::cuda::CUDAStreamGuard guard(s1);
             feature_s1_cuda.copy_(feature_s1, /*non_blocking=*/true);
-            result_s1_cuda = torch::matmul(feature_s1_cuda, weight); // may call cuBLAS
-            result_s1.copy_(result_s1_cuda, /*non_blocking=*/true);
+            auto tmp = torch::matmul(feature_s1_cuda, weight); // may call cuBLAS
+            result_s1.copy_(tmp, /*non_blocking=*/true);
             // cudaMemcpyAsync(result_s1.data_ptr<float>(), tmp.data_ptr<float>(), tmp.numel() * sizeof(float), cudaMemcpyDeviceToHost, s1.stream());
         }
 
@@ -545,26 +542,11 @@ void test_pytorch_stream_overlap(c10::Device device)
             }
             at::cuda::CUDAStreamGuard guard(s2);
             feature_s2_cuda.copy_(feature_s2, /*non_blocking=*/true);
-            result_s2_cuda = torch::matmul(feature_s2_cuda, weight);
-            result_s2.copy_(result_s2_cuda, /*non_blocking=*/true);
+            auto tmp = torch::matmul(feature_s2_cuda, weight);
+            result_s2.copy_(tmp, /*non_blocking=*/true);
         }
     }
 
-    // sync and query event timings
-
-    float ms_s1 = 0.0f, ms_s2 = 0.0f;
-    // measure each stream's pre->post time
-    std::cout << "stream1 block elapsed (ms): " << ms_s1 << " | stream2 block elapsed (ms): " << ms_s2 << std::endl;
-
-    // Finally copy results back
-    {
-        at::cuda::CUDAStreamGuard guard(s1);
-        result_s1.copy_(result_s1_cuda, /*non_blocking=*/true);
-    }
-    {
-        at::cuda::CUDAStreamGuard guard(s2);
-        result_s2.copy_(result_s2_cuda, /*non_blocking=*/true);
-    }
     // wait for both streams
     s1.synchronize();
     s2.synchronize();
@@ -756,13 +738,14 @@ int main()
 
     test_pytorch_stream_overlap(device);
     // torch::jit::Module nn = get_model_for_infer(device);
-    torch::jit::Module nn = get_model_for_infer_selfattn(device);
-    warm_up(nn, device);
-    int tot_iter = 4000;
-    single_thread_real_scenerio(nn, device, tot_iter);
-    single_thread_real_scenerio_with_pinned_memory_and_stream(nn, device, tot_iter);
-    multi_thread_real_scenerio_with_pinned_memory_and_stream(nn, device, tot_iter, 2);
-    multi_thread_real_scenerio_with_pinned_memory_and_stream_and_cuda_graph(nn, device, tot_iter, 2);
+
+    // torch::jit::Module nn = get_model_for_infer_selfattn(device);
+    // warm_up(nn, device);
+    // int tot_iter = 4000;
+    // single_thread_real_scenerio(nn, device, tot_iter);
+    // single_thread_real_scenerio_with_pinned_memory_and_stream(nn, device, tot_iter);
+    // multi_thread_real_scenerio_with_pinned_memory_and_stream(nn, device, tot_iter, 2);
+    // multi_thread_real_scenerio_with_pinned_memory_and_stream_and_cuda_graph(nn, device, tot_iter, 2);
 
     // multi_thread_real_scenerio_with_pinned_memory_and_stream(nn, device, tot_iter, 4);
 
@@ -771,7 +754,7 @@ int main()
     // single_thread_real_scenerio_with_pinned_memory_and_stream_gemm(device);
     // test_pytorch_stream_overlap_mt(device);
     // test_pytorch_default_stream_mt(device);
-    // test_pytorch_stream_overlap(device);
-    // test_pytorch_stream_overlap_mt(device);
+    test_pytorch_stream_overlap(device);
+    test_pytorch_stream_overlap_mt(device);
     // test_pytorch_stream_overlap_mt_no_pin(device);
 }
