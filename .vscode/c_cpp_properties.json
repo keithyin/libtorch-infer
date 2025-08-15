@@ -1,21 +1,17 @@
 {
     "configurations": [
         {
-            "name": "Win32",
+            "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "E:\\libs\\libtorch-win-shared-with-deps-2.8.0+cu129\\libtorch\\**",
-                "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.9/**"
+                "/data/libs/libtorch2.3/**",
+                "/usr/local/cuda-12.2/include/**"
             ],
-            "defines": [
-                "_DEBUG",
-                "UNICODE",
-                "_UNICODE"
-            ],
-            "windowsSdkVersion": "10.0.22621.0",
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
             "cStandard": "c17",
-            "cppStandard": "c++17",
-            "intelliSenseMode": "windows-msvc-x64"
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-x64"
         }
     ],
     "version": 4
