@@ -511,38 +511,35 @@ void thread_worker(c10::Device device, int iterations, float &sum_out)
     for (int i = 0; i < iterations; ++i)
     {
 
+        if (i % 2 == 0)
         {
-            if (i % 2 == 0)
-            {
-                std::copy(feature_origin.begin(), feature_origin.end(), feature.data_ptr<float>());
-                std::copy(length_origin.begin(), length_origin.end(), length.data_ptr<int64_t>());
-            }
-            else
-            {
-
-                std::copy(feature_origin_2.begin(), feature_origin_2.end(), feature.data_ptr<float>());
-                std::copy(length_origin.begin(), length_origin.end(), length.data_ptr<int64_t>());
-            }
-
-            feature_cuda.copy_(feature, true);
-            length_cuda.copy_(length, true);
-
-            auto tmp = nn.forward({feature_cuda, length_cuda}).toTensor().contiguous();
-
-            result.copy_(tmp, true);
+            std::copy(feature_origin.begin(), feature_origin.end(), feature.data_ptr<float>());
+            std::copy(length_origin.begin(), length_origin.end(), length.data_ptr<int64_t>());
         }
+        else
+        {
+
+            std::copy(feature_origin_2.begin(), feature_origin_2.end(), feature.data_ptr<float>());
+            std::copy(length_origin.begin(), length_origin.end(), length.data_ptr<int64_t>());
+        }
+
+        feature_cuda.copy_(feature, true);
+        length_cuda.copy_(length, true);
+
+        auto tmp = nn.forward({feature_cuda, length_cuda}).toTensor().contiguous();
+
+        result.copy_(tmp, true);
         // std::cout << "iter: " << i << std::endl;
         stream.synchronize();
 
-        std::vector<float> output(result.data_ptr<float>(), result.data_ptr<float>() + result.numel());
-        if (std::isnan(output[1]))
+        if (std::isnan(result.data_ptr<float>()[1]))
         {
             nan_counter += 1;
             std::cout << "thread_idx: " << thread_id << " nan iter: " << i << " stream:" << stream.stream() << std::endl;
         }
         else
         {
-            local_sum += output[1];
+            local_sum += result.data_ptr<float>()[1];
         }
         sum_out = local_sum;
     }
@@ -623,15 +620,14 @@ void thread_worker_ptds(c10::Device device, int iterations, float &sum_out)
         // std::cout << "iter: " << i << std::endl;
         stream.synchronize();
 
-        std::vector<float> output(result.data_ptr<float>(), result.data_ptr<float>() + result.numel());
-        if (std::isnan(output[1]))
+        if (std::isnan(result.data_ptr<float>()[1]))
         {
             nan_counter += 1;
             std::cout << "thread_idx: " << thread_id << " nan iter: " << i << " stream:" << stream.stream() << std::endl;
         }
         else
         {
-            local_sum += output[1];
+            local_sum += result.data_ptr<float>()[1];
         }
         sum_out = local_sum;
     }
@@ -720,8 +716,7 @@ void thread_worker_seperate_io_and_compute_stream(c10::Device device, int iterat
             stream.synchronize();
         }
 
-        std::vector<float> output(result.data_ptr<float>(), result.data_ptr<float>() + result.numel());
-        if (std::isnan(output[0]))
+        if (std::isnan(result.data_ptr<float>()[0]))
         {
             nan_counter += 1;
             std::cout << "nan iter: " << i << " stream:" << stream.stream() << std::endl;
@@ -729,7 +724,7 @@ void thread_worker_seperate_io_and_compute_stream(c10::Device device, int iterat
         }
         else
         {
-            local_sum += output[0];
+            local_sum += result.data_ptr<float>()[0];
         }
         sum_out = local_sum;
     }
@@ -746,9 +741,9 @@ void thread_worker_seperate_io_and_compute_stream(c10::Device device, int iterat
 
 void thread_worker_with_cuda_graph(c10::Device device, int iterations, float &sum_out)
 {
+    torch::DeviceGuard device_guard(device);
     torch::NoGradGuard no_grad;
 
-    // torch::cuda::empty({(4ll << 30) / 4}, torch::kFloat32, torch::kCUDA);
     torch::jit::Module nn = get_model_for_infer_selfattn(device);
 
     at::cuda::CUDAStream stream = at::cuda::getStreamFromPool(false, device.index());
@@ -770,6 +765,9 @@ void thread_worker_with_cuda_graph(c10::Device device, int iterations, float &su
     std::vector<float> feature_origin(num_feature, 1);
     std::vector<int64_t> length_origin(256, 200);
 
+    std::vector<float> feature_origin_2(num_feature, 2);
+    std::vector<int64_t> length_origin_2(256, 200);
+
     torch::Tensor feature = torch::empty({256, 200, 61}, c10::TensorOptions().dtype(torch::kFloat32).pinned_memory(true));
     torch::Tensor length = torch::empty({256}, c10::TensorOptions().dtype(torch::kInt64).pinned_memory(true));
 
@@ -788,7 +786,7 @@ void thread_worker_with_cuda_graph(c10::Device device, int iterations, float &su
     feature_cuda.copy_(feature, true);
     length_cuda.copy_(length, true);
 
-    result.copy_(nn.forward(inp).toTensor().contiguous(), true);
+    result.copy_(nn.forward(inp).toTensor(), true);
     graph.capture_end();
     stream.synchronize();
 
@@ -800,13 +798,24 @@ void thread_worker_with_cuda_graph(c10::Device device, int iterations, float &su
     {
         // Host buffer 填充
 
-        memcpy(feature.data_ptr<float>(), feature_origin.data(), feature_origin.size());
-        memcpy(length.data_ptr<int64_t>(), length_origin.data(), length_origin.size());
+        if (i % 2 == 0)
+        {
+            std::copy(feature_origin.begin(), feature_origin.end(), feature.data_ptr<float>());
+            std::copy(length_origin.begin(), length_origin.end(), length.data_ptr<int64_t>());
+        }
+        else
+        {
+
+            std::copy(feature_origin_2.begin(), feature_origin_2.end(), feature.data_ptr<float>());
+            std::copy(length_origin.begin(), length_origin.end(), length.data_ptr<int64_t>());
+        }
+
+        // memcpy(feature.data_ptr<float>(), feature_origin.data(), feature_origin.size());
+        // memcpy(length.data_ptr<int64_t>(), length_origin.data(), length_origin.size());
 
         graph.replay();
         stream.synchronize();
-        std::vector<float> output(result.data_ptr<float>(), result.data_ptr<float>() + result.numel());
-        local_sum += output[1];
+        local_sum += result.data_ptr<float>()[1];
         sum_out = local_sum;
     }
     sum_out = local_sum;
@@ -830,9 +839,9 @@ void multi_thread_real_scenerio_with_pinned_memory_and_stream(c10::Device device
 
     for (int t = 0; t < num_threads; ++t)
     {
-        // std::thread thread(thread_worker, device, iterations / num_threads, std::ref(sums[t]));
+        std::thread thread(thread_worker, device, iterations / num_threads, std::ref(sums[t]));
         // std::thread thread(thread_worker_ptds, device, iterations / num_threads, std::ref(sums[t]));
-        std::thread thread(thread_worker_with_cuda_graph, device, iterations / num_threads, std::ref(sums[t]));
+        // std::thread thread(thread_worker_with_cuda_graph, device, iterations / num_threads, std::ref(sums[t]));
 
         threads.emplace_back(std::move(thread));
     }
@@ -926,7 +935,7 @@ void single_thread_real_scenerio_with_pinned_memory_and_stream_gemm(c10::Device 
             feature_s1_cuda.copy_(feature_s1, true);
 
             torch::Tensor result_s1_cuda = feature_s1_cuda.matmul(weight).matmul(weight2).matmul(weight3).matmul(weight4);
-            result_s1.copy_(result_s1_cuda.contiguous(), true);
+            result_s1.copy_(result_s1_cuda, true);
         }
 
         {
@@ -942,7 +951,7 @@ void single_thread_real_scenerio_with_pinned_memory_and_stream_gemm(c10::Device 
 
             torch::Tensor result_s2_cuda = feature_s2_cuda.matmul(weight).matmul(weight2).matmul(weight3).matmul(weight4);
 
-            result_s2.copy_(result_s2_cuda.contiguous(), true);
+            result_s2.copy_(result_s2_cuda, true);
         }
     }
 
@@ -1277,6 +1286,7 @@ int main()
     torch::NoGradGuard no_grad;
 
     int tot_iter = 900;
+    // int tot_iter = 8;
     // single_thread_real_scenerio(device, tot_iter);
     // single_thread_real_scenerio_with_pinned_memory_and_stream(device, tot_iter);
     // single_thread_real_scenerio_with_pinned_memory_and_stream_3_stream(device, tot_iter);
