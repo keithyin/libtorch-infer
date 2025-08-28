@@ -14,6 +14,7 @@ add_library(torch_stream_infer_ffi STATIC libtorch_stream_infer_ffi.cc libtorch_
 message("torch_libraries=> ${TORCH_LIBRARIES}")
 target_link_libraries(torch_stream_infer_ffi PUBLIC "${TORCH_LIBRARIES}")
 set_property(TARGET torch_stream_infer_ffi PROPERTY CXX_STANDARD 17)
+target_compile_options(torch_stream_infer_ffi PRIVATE -fPIC)
 
 # CMAKE_PREFIX_PATH
 # The following code block is suggested to be used on Windows.

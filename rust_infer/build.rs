@@ -60,15 +60,17 @@ fn main() {
     println!("cargo:rustc-link-lib=static=torch_stream_infer_ffi");
     println!("cargo:rustc-link-lib=dylib=stdc++");
 
-    let torch_dynlibs = vec!["c10", "cuda", "nvrtc", "nvToolsExt", "cudart", "c10_cuda"];
-    // let torch_static_libs = vec!["kineto"];
+    // torch_library
+    // let torch_dynlibs = "torch".split(";").collect::<Vec<_>>();
 
+
+    // let torch_abslibs = "/data/libs/libtorch2.3/lib/libc10.so;/usr/lib/x86_64-linux-gnu/libcuda.so;/usr/local/cuda/lib64/libnvrtc.so;/usr/local/cuda/lib64/libnvToolsExt.so;/usr/local/cuda/lib64/libcudart.so;/data/libs/libtorch2.3/lib/libc10_cuda.so".split(";").collect::<Vec<_>>();
+    // for dynlib in torch_abslibs {
+    //     println!("cargo:rustc-link-search=native={}", dynlib);
+    // }
+
+    let torch_dynlibs = vec!["torch", "c10", "cuda", "nvrtc", "nvToolsExt", "cudart", "c10_cuda"];
     for dynlib in torch_dynlibs {
         println!("cargo:rustc-link-lib=dylib={}", dynlib);
     }
-
-    // for static_lib in torch_static_libs {
-    // println!("cargo:rustc-link-lib=static=torch_stream_infer_ffi");
-
-    // }
 }
