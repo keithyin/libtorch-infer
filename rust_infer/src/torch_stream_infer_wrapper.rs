@@ -44,33 +44,48 @@ impl ModuleInferCtx {
         }
     }
 
-    pub fn feature_mut(&mut self) -> ArrayViewMut3<'_, f32> {
+    pub fn feature_mut(&mut self) -> Option<ArrayViewMut3<'_, f32>> {
+        if self.inner.batch_feature.is_null() {
+            return None;
+        }
+
         unsafe {
-            ArrayViewMut3::from_shape_ptr(
+            Some(ArrayViewMut3::from_shape_ptr(
                 (
                     self.batch as usize,
                     self.timestemp as usize,
                     self.feat_size as usize,
                 ),
                 self.inner.batch_feature,
-            )
+            ))
         }
     }
 
-    pub fn length_mut(&mut self) -> ArrayViewMut1<'_, i64> {
-        unsafe { ArrayViewMut1::from_shape_ptr(self.batch as usize, self.inner.batch_lengths) }
+    pub fn length_mut(&mut self) -> Option<ArrayViewMut1<'_, i64>> {
+        if self.inner.batch_lengths.is_null() {
+            return None;
+        }
+        unsafe {
+            Some(ArrayViewMut1::from_shape_ptr(
+                self.batch as usize,
+                self.inner.batch_lengths,
+            ))
+        }
     }
 
-    pub fn output(&self) -> ArrayView3<'_, f32> {
+    pub fn output(&self) -> Option<ArrayView3<'_, f32>> {
+        if self.inner.output.is_null() {
+            return None;
+        }
         unsafe {
-            ArrayView3::from_shape_ptr(
+            Some(ArrayView3::from_shape_ptr(
                 (
                     self.batch as usize,
                     self.timestemp as usize,
                     self.output_size as usize,
                 ),
                 self.inner.output,
-            )
+            ))
         }
     }
 
@@ -85,23 +100,26 @@ impl Drop for ModuleInferCtx {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use crate::torch_stream_infer_wrapper::ModuleInferCtx;
 
-
-
     #[test]
     fn test_infer() {
-
-        let model_path = "/root/projects/libtorch-infer/models/self-attn-newpe-nomaskcheck-nocausal/model";
+        let model_path =
+            "/root/projects/libtorch-infer/models/self-attn-newpe-nomaskcheck-nocausal/model";
         let mut ctx = ModuleInferCtx::new(model_path, 3, 256, 200, 61, 2, true);
-        ctx.feature_mut().fill(1.0);
-        ctx.length_mut().fill(200);
-        ctx.do_infer();
-        let res = ctx.output();
-        println!("{}", res[[0, 0, 0]]);
+        println!("here");
 
+        ctx.feature_mut().unwrap().fill(1.0);
+        println!("feature:{}", ctx.feature_mut().unwrap()[[0, 0, 0]]);
+        ctx.length_mut().unwrap().fill(200);
+        println!("length:{}", ctx.length_mut().unwrap()[0]);
+
+        ctx.do_infer();
+        println!("done infer");
+        let res = ctx.output().unwrap();
+        println!("{}", res[[0, 0, 0]]);
+        println!("{}", res[[0, 0, 1]]);
     }
 }

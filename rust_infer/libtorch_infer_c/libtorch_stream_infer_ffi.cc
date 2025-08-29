@@ -35,8 +35,8 @@ ModuleInferCtx build_module_infer_ctx(const char *model_path, int device_id, int
     torch::Tensor *length_cuda = nullptr;
     if (device_id >= 0)
     {
-        torch::Tensor *feature_cuda = new torch::Tensor(torch::empty({batch, tt, feat_len}, c10::TensorOptions().dtype(torch::kFloat32).device(device)));
-        torch::Tensor *length_cuda = new torch::Tensor(torch::empty({batch}, c10::TensorOptions().dtype(torch::kInt64).device(device)));
+        feature_cuda = new torch::Tensor(torch::empty({batch, tt, feat_len}, c10::TensorOptions().dtype(torch::kFloat32).device(device)));
+        length_cuda = new torch::Tensor(torch::empty({batch}, c10::TensorOptions().dtype(torch::kInt64).device(device)));
     }
 
     torch::Tensor *result = new torch::Tensor(torch::empty({batch, tt, output_size}, c10::TensorOptions().dtype(torch::kFloat32).pinned_memory(pin_memory)));
@@ -79,20 +79,30 @@ ModuleInferCtx build_module_infer_ctx(const char *model_path, int device_id, int
 
 void do_infer(ModuleInferCtx *ctx)
 {
+    try
+    {
+        c10::DeviceGuard _device_guard(*static_cast<c10::Device *>(ctx->_device));
+        c10::NoGradGuard _no_grad;
+        assert(ctx->_stream != nullptr);
 
-    c10::DeviceGuard _device_guard(*static_cast<c10::Device *>(ctx->_device));
+        c10::StreamGuard _stream_guard(*static_cast<c10::Stream *>(ctx->_stream));
 
-    assert(ctx->_stream != nullptr);
-
-    c10::StreamGuard _stream_guard(*static_cast<c10::Stream *>(ctx->_stream));
-
-    static_cast<torch::Tensor *>(ctx->_batch_feature_cuda_tensor)->copy_(*static_cast<torch::Tensor *>(ctx->_batch_feature_tensor), true);
-    static_cast<torch::Tensor *>(ctx->_batch_lengths_cuda_tensor)->copy_(*static_cast<torch::Tensor *>(ctx->_batch_lengths_tensor), true);
-    auto output_cuda = static_cast<torch::jit::Module *>(ctx->_nn_module)->forward(
-        {*static_cast<torch::Tensor *>(ctx->_batch_feature_cuda_tensor), *static_cast<torch::Tensor *>(ctx->_batch_lengths_cuda_tensor)});
-    static_cast<torch::Tensor *>(ctx->_output_tensor)->copy_(output_cuda.toTensor(), true);
-    static_cast<c10::Stream *>(ctx->_stream)->synchronize();
-    
+        static_cast<torch::Tensor *>(ctx->_batch_feature_cuda_tensor)->copy_(*static_cast<torch::Tensor *>(ctx->_batch_feature_tensor), true);
+        static_cast<torch::Tensor *>(ctx->_batch_lengths_cuda_tensor)->copy_(*static_cast<torch::Tensor *>(ctx->_batch_lengths_tensor), true);
+        auto output_cuda = static_cast<torch::jit::Module *>(ctx->_nn_module)->forward({*static_cast<torch::Tensor *>(ctx->_batch_feature_cuda_tensor), *static_cast<torch::Tensor *>(ctx->_batch_lengths_cuda_tensor)});
+        static_cast<torch::Tensor *>(ctx->_output_tensor)->copy_(output_cuda.toTensor(), true);
+        static_cast<c10::Stream *>(ctx->_stream)->synchronize();
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "C++ exception caught: " << e.what() << std::endl;
+        throw e;
+    }
+    catch (...)
+    {
+        std::cerr << "do_infer exception" << std::endl;
+        throw std::runtime_error("do_infer exception");
+    }
 }
 
 void free_module_infer_ctx(ModuleInferCtx *ctx)

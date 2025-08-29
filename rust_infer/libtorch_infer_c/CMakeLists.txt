@@ -5,6 +5,8 @@ if (NOT CMAKE_PREFIX_PATH)
   set(CMAKE_PREFIX_PATH "/data/libs/libtorch2.3")
 endif()
 
+get_filename_component(libtorch_lib_dir "${CMAKE_PREFIX_PATH}/lib" ABSOLUTE)
+
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
@@ -15,6 +17,10 @@ message("torch_libraries=> ${TORCH_LIBRARIES}")
 target_link_libraries(torch_stream_infer_ffi PUBLIC "${TORCH_LIBRARIES}")
 set_property(TARGET torch_stream_infer_ffi PROPERTY CXX_STANDARD 17)
 target_compile_options(torch_stream_infer_ffi PRIVATE -fPIC)
+
+# useless
+set_property(TARGET torch_stream_infer_ffi PROPERTY
+  LINK_FLAGS "-Wl,-rpath,${libtorch_lib_dir}")
 
 # CMAKE_PREFIX_PATH
 # The following code block is suggested to be used on Windows.
